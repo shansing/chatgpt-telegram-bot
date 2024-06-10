@@ -5,8 +5,9 @@ import type TelegramBot from 'node-telegram-bot-api';
 import telegramifyMarkdown from 'telegramify-markdown';
 import type {ChatGPT} from '../api';
 import {BotOptions} from '../types';
-import {logWithTime} from '../utils';
+import {generateIdFromMessage, logWithTime} from '../utils';
 import Queue from 'promise-queue';
+import {DB} from '../db';
 
 class ChatHandler {
   debug: number;
@@ -18,12 +19,20 @@ class ChatHandler {
   protected _apiRequestsQueue = new Queue(1, Infinity);
   protected _positionInQueue: Record<string, number> = {};
   protected _updatePositionQueue = new Queue(20, Infinity);
+  protected _db: DB;
 
-  constructor(bot: TelegramBot, api: ChatGPT, botOpts: BotOptions, debug = 1) {
+  constructor(
+    bot: TelegramBot,
+    api: ChatGPT,
+    botOpts: BotOptions,
+    db: DB,
+    debug = 1
+  ) {
     this.debug = debug;
     this._bot = bot;
     this._api = api;
     this._opts = botOpts;
+    this._db = db;
   }
 
   handle = async (msg: TelegramBot.Message, text: string) => {
@@ -40,33 +49,53 @@ class ChatHandler {
     }
 
     // Send a message to the chat acknowledging receipt of their message
-    const reply = await this._bot.sendMessage(chatId, '⌛', {
-      reply_to_message_id: msg.message_id,
-    });
-
-    // add to sequence queue due to chatGPT processes only one request at a time
-    const requestPromise = this._apiRequestsQueue.add(() => {
-      return this._sendToGpt(text, chatId, reply);
-    });
-    if (this._n_pending == 0) this._n_pending++;
-    else this._n_queued++;
-    this._positionInQueue[this._getQueueKey(chatId, reply.message_id)] =
-      this._n_queued;
-
-    await this._bot.editMessageText(
-      this._n_queued > 0 ? `⌛: You are #${this._n_queued} in line.` : '🤔',
+    const reply = await this._bot.sendMessage(
+      chatId,
+      this._opts.queue ? '⌛' : '🤔',
       {
-        chat_id: chatId,
-        message_id: reply.message_id,
+        reply_to_message_id: msg.message_id,
       }
     );
-    await requestPromise;
+
+    const sendToGpt = async () => {
+      await this._sendToGpt(
+        text,
+        chatId,
+        reply,
+        generateIdFromMessage(reply),
+        generateIdFromMessage(msg.reply_to_message)
+      );
+    };
+
+    if (!this._opts.queue) {
+      await sendToGpt();
+    } else {
+      // add to sequence queue due to chatGPT processes only one request at a time
+      const requestPromise = this._apiRequestsQueue.add(() => {
+        return sendToGpt();
+      });
+      if (this._n_pending == 0) this._n_pending++;
+      else this._n_queued++;
+      this._positionInQueue[this._getQueueKey(chatId, reply.message_id)] =
+        this._n_queued;
+
+      await this._bot.editMessageText(
+        this._n_queued > 0 ? `⌛: You are #${this._n_queued} in line.` : '🤔',
+        {
+          chat_id: chatId,
+          message_id: reply.message_id,
+        }
+      );
+      await requestPromise;
+    }
   };
 
   protected _sendToGpt = async (
     text: string,
     chatId: number,
-    originalReply: TelegramBot.Message
+    originalReply: TelegramBot.Message,
+    messageId: string,
+    replyId?: string
   ) => {
     let reply = originalReply;
     await this._bot.sendChatAction(chatId, 'typing');
@@ -75,6 +104,9 @@ class ChatHandler {
     try {
       const res = await this._api.sendMessage(
         text,
+        chatId,
+        messageId,
+        replyId,
         _.throttle(
           async (partialResponse: ChatResponseV3 | ChatResponseV4) => {
             const resText =
@@ -97,6 +129,7 @@ class ChatHandler {
       if (this.debug >= 1) logWithTime(`📨 Response:\n${resText}`);
     } catch (err) {
       logWithTime('⛔️ ChatGPT API error:', (err as Error).message);
+      await this._db.clearContext(chatId);
       this._bot.sendMessage(
         chatId,
         "⚠️ Sorry, I'm having trouble connecting to the server, please try again later."
@@ -117,7 +150,7 @@ class ChatHandler {
       return msg;
     }
     try {
-      text = telegramifyMarkdown(text);
+      text = telegramifyMarkdown(text, 'escape');
       const res = await this._bot.editMessageText(text, {
         chat_id: msg.chat.id,
         message_id: msg.message_id,
@@ -133,6 +166,7 @@ class ChatHandler {
       }
     } catch (err) {
       logWithTime('⛔️ Edit message error:', (err as Error).message);
+      if (this.debug >= 2) logWithTime('⛔️ Message text:', text);
       return msg;
     }
   };

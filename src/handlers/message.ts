@@ -5,29 +5,38 @@ import {logWithTime} from '../utils';
 import {Authenticator} from './authentication';
 import {ChatHandler} from './chat';
 import {CommandHandler} from './command';
+import {DB} from '../db';
 
 class MessageHandler {
   debug: number;
   protected _opts: BotOptions;
   protected _bot: TelegramBot;
   protected _botUsername = '';
+  protected _botId: number | undefined;
   protected _api: ChatGPT;
   protected _authenticator: Authenticator;
   protected _commandHandler: CommandHandler;
   protected _chatHandler: ChatHandler;
 
-  constructor(bot: TelegramBot, api: ChatGPT, botOpts: BotOptions, debug = 1) {
+  constructor(
+    bot: TelegramBot,
+    api: ChatGPT,
+    botOpts: BotOptions,
+    db: DB,
+    debug = 1
+  ) {
     this.debug = debug;
     this._bot = bot;
     this._api = api;
     this._opts = botOpts;
     this._authenticator = new Authenticator(bot, botOpts, debug);
     this._commandHandler = new CommandHandler(bot, api, botOpts, debug);
-    this._chatHandler = new ChatHandler(bot, api, botOpts, debug);
+    this._chatHandler = new ChatHandler(bot, api, botOpts, db, debug);
   }
 
   init = async () => {
     this._botUsername = (await this._bot.getMe()).username ?? '';
+    this._botId = (await this._bot.getMe()).id;
     logWithTime(`🤖 Bot @${this._botUsername} has started...`);
   };
 
@@ -52,7 +61,13 @@ class MessageHandler {
       // - direct messages in private chats
       // - replied messages in both private chats and group chats
       // - messages that start with `chatCmd` in private chats and group chats
-      await this._chatHandler.handle(msg, text);
+      if (
+        command == this._opts.chatCmd ||
+        msg.chat.type == 'private' ||
+        msg.reply_to_message?.from?.id === this._botId
+      ) {
+        await this._chatHandler.handle(msg, text);
+      }
     }
   };
 
