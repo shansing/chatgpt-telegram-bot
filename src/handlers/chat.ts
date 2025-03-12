@@ -155,7 +155,7 @@ class ChatHandler {
       const res = await this._bot.editMessageText(text, {
         chat_id: msg.chat.id,
         message_id: msg.message_id,
-        parse_mode: needParse ? 'MarkdownV2' : undefined,
+        parse_mode: 'HTML', //needParse ? 'MarkdownV2' : undefined,
       });
       // type of res is boolean | Message
       if (typeof res === 'object') {
