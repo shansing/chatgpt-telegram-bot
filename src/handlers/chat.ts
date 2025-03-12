@@ -150,7 +150,8 @@ class ChatHandler {
       return msg;
     }
     try {
-      text = telegramifyMarkdown(text, 'escape');
+      // text = telegramifyMarkdown(text, 'escape');
+      text = '<blockquote expandable>' + escapeHtml(text) + '</blockquote>';
       const res = await this._bot.editMessageText(text, {
         chat_id: msg.chat.id,
         message_id: msg.message_id,
@@ -202,6 +203,17 @@ class ChatHandler {
       });
     }
   };
+}
+
+function escapeHtml(text: string): string {
+  const map: {[key: string]: string} = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;',
+  };
+  return text.replace(/[&<>"']/g, (m) => map[m]);
 }
 
 export {ChatHandler};
