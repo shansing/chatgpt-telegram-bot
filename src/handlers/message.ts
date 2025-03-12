@@ -63,8 +63,8 @@ class MessageHandler {
       // - messages that start with `chatCmd` in private chats and group chats
       if (
         command == this._opts.chatCmd ||
-        msg.chat.type == 'private' ||
-        msg.reply_to_message?.from?.id === this._botId
+        msg.chat.type == 'private' // ||
+        // msg.reply_to_message?.from?.id === this._botId
       ) {
         await this._chatHandler.handle(msg, text);
       }
